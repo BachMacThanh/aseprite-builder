@@ -1,11 +1,7 @@
-name: release
-on:
-  push:
-    branches:
-      - main
-
+name: build
+on: [push, pull_request]
 jobs:
-  build-and-release:
+  build:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -91,7 +87,8 @@ jobs:
           -DENABLE_CCACHE=$enable_ccache \
           -DLAF_BACKEND=$laf_backend \
           -DSKIA_DIR=skia \
-          -DSKIA_LIBRARY_DIR=skia/out/Release-$skia_arch
+          -DSKIA_LIBRARY_DIR=skia/out/Release-$skia_arch \
+          -DCMAKE_SOURCE_DIR=${{ github.workspace }}
     - name: Compiling
       shell: bash
       run: |
@@ -113,23 +110,3 @@ jobs:
         export ASEPRITE=$PWD/build/bin/aseprite
         cd tests
         $XVFB bash run-tests.sh
-    - name: Create Draft Release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.sha }}
-        release_name: Release ${{ github.sha }}
-        draft: true
-        prerelease: true
-        body: |
-          This is a draft release created by GitHub Actions.
-    - name: Upload Release Assets
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./build/bin/aseprite
-        asset_name: aseprite-${{ matrix.os }}-${{ matrix.build_type }}-${{ matrix.ui }}-${{ matrix.scripting }}.zip
-        asset_content_type: application/zip
