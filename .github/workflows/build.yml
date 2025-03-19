@@ -1,47 +1,62 @@
-name: Build a specified version
+name: release
 on:
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'the tag(version) of the Aseprite'
-        required: true
+  push:
+    branches:
+      - main
+
 jobs:
-  build:
+  build-and-release:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest]
-        build_type: [Release]
-        enable_ui: [on]
-        include:
-          - os: windows-latest
-            build_type: Release
-            enable_ui: on
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        build_type: [RelWithDebInfo, Debug]
+        ui: [gui, cli]
+        scripting: [lua, noscripts]
+        exclude:
+          - build_type: Debug
+            ui: gui
+          - build_type: RelWithDebInfo
+            ui: cli
+          - build_type: RelWithDebInfo
+            scripting: noscripts
     steps:
-
-    - name: 获得 Release 的 Body 与仓库名称
-      id: get-content
+    - uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+    - name: Install Dependencies
+      if: runner.os == 'Linux'
       shell: bash
       run: |
-        body=$(curl -s https://api.github.com/repos/aseprite/aseprite/releases/tags/${{ github.event.inputs.tag_name }} | jq -r '.body')
-        echo "body-content=$(echo $body)" >> $GITHUB_OUTPUT 
-        echo $body
-        GITHUB_REPOSITORY="${{ github.repository }}"
-        REPO_NAME="${GITHUB_REPOSITORY#${{ github.repository_owner }}/}"
-        echo "repo-name=$(echo $REPO_NAME)" >> $GITHUB_OUTPUT 
-        echo $REPO_NAME
-
-    - uses: actions/checkout@v3
+        sudo apt-get update -qq
+        sudo apt-get install -y \
+          libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
+          libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev
+    - name: Install Skia
+      if: ${{ matrix.ui == 'gui' }}
+      shell: bash
+      run: |
+        if [[ "${{ runner.os }}" == "Windows" ]] ; then
+          choco install wget -y --no-progress
+          wget https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip
+          unzip Skia-Windows-Release-x64.zip -d skia
+        elif [[ "${{ runner.os }}" == "macOS" ]] ; then
+          wget https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-macOS-Release-arm64.zip
+          unzip Skia-macOS-Release-arm64.zip -d skia
+        else
+          wget https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Linux-Release-x64-libstdc++.zip
+          unzip Skia-Linux-Release-x64-libstdc++.zip -d skia
+        fi
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1
+      if: ${{ runner.os == 'Linux' || runner.os == 'macOS' }}
       with:
-        repository: 'aseprite/aseprite'
-        submodules: 'recursive'
-        ref: ${{ github.event.inputs.tag_name }}
-
-    - uses: seanmiddleditch/gha-setup-ninja@master
+        key: ${{ matrix.os }}-${{ matrix.ui }}-${{ matrix.scripting }}-${{ matrix.build_type }}
+    - uses: aseprite/get-ninja@main
     - uses: ilammy/msvc-dev-cmd@v1
-
-    - name: 获取 skia 并且生成 Makefile
+      if: runner.os == 'Windows'
+    - name: Generating Makefiles
       shell: bash
       run: |
         if [[ "${{ runner.os }}" == "Windows" ]] ; then
@@ -49,59 +64,72 @@ jobs:
         else
           export enable_ccache=on
         fi
-        curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip
-        7z x skia.zip -oskia
+
+        if [[ "${{ matrix.ui }}" == "gui" ]] ; then
+          export laf_backend=skia
+        else
+          export laf_backend=none
+        fi
+
+        if [[ "${{ matrix.scripting }}" == "lua" ]] ; then
+          export enable_scripting=on
+        else
+          export enable_scripting=off
+        fi
+
+        if [[ "${{ runner.os }}" == "macOS" ]] ; then
+          export skia_arch=arm64
+        else
+          export skia_arch=x64
+        fi
+
         cmake -S . -B build -G Ninja \
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-          -DENABLE_UI=${{ matrix.enable_ui }} \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 \
+          -DENABLE_TESTS=ON \
+          -DENABLE_SCRIPTING=$enable_scripting \
           -DENABLE_CCACHE=$enable_ccache \
-          -DLAF_BACKEND=skia \
-          -DSKIA_DIR=./skia \
-          -DSKIA_LIBRARY_DIR=./skia/out/Release-x64 \
-          -DSKIA_LIBRARY=./skia/out/Release-x64/skia.lib
-
-    - name: 编译
+          -DLAF_BACKEND=$laf_backend \
+          -DSKIA_DIR=skia \
+          -DSKIA_LIBRARY_DIR=skia/out/Release-$skia_arch
+    - name: Compiling
       shell: bash
       run: |
         cd build && ninja
-    
-    - name: 获取 "libcrypto-1_1-x64.dll"
-      shell: bash 
-      run: |
-        GITHUB_REPOSITORY="${{ github.repository }}"
-        REPO_NAME="${GITHUB_REPOSITORY#${{ github.repository_owner }}/}"
-
-        curl -L -o D:/a/$REPO_NAME/$REPO_NAME/build/bin/libcrypto-1_1-x64.dll https://github.com/feenkcom/libopenssl/releases/download/v0.5.0/crypto-x86_64-pc-windows-msvc.dll
-    
-    # # 请确保是私有仓库再启用该功能
-    # - name: 上传文件到 artifact
-    #   uses: actions/upload-artifact@v3
-    #   with:
-    #     name: aseprite 
-    #     path: |
-    #       REPO_NAME=${{ steps.get-content.outputs.repo-name }}
-
-    #       D:/a/$REPO_NAME/$REPO_NAME/build/bin/data
-    #       D:/a/$REPO_NAME/$REPO_NAME/build/bin/aseprite.exe
-    #       D:/a/$REPO_NAME/$REPO_NAME/build/bin/libcrypto-1_1-x64.dll
-
-    - name: 打包
+    - name: Running C++ Tests
       shell: bash
       run: |
-        REPO_NAME=${{ steps.get-content.outputs.repo-name }}
-
-        cd D:/a/$REPO_NAME/$REPO_NAME/build/bin/
-        7z a -tzip aseprite.${{ github.event.inputs.tag_name }}.zip data aseprite.exe libcrypto-1_1-x64.dll
-        cp aseprite.${{ github.event.inputs.tag_name }}.zip D:/a/
-
-    - name: 草拟 Release 并且上传文件
-      uses: softprops/action-gh-release@v1
+        if [[ "${{ runner.os }}" == "Linux" ]] ; then
+          export XVFB=xvfb-run
+        fi
+        cd build && $XVFB ctest --output-on-failure
+    - name: Running CLI Tests
+      if: ${{ matrix.scripting == 'lua' }}
+      shell: bash
+      run: |
+        if [[ "${{ runner.os }}" == "Linux" ]] ; then
+          export XVFB=xvfb-run
+        fi
+        export ASEPRITE=$PWD/build/bin/aseprite
+        cd tests
+        $XVFB bash run-tests.sh
+    - name: Create Draft Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        tag_name: ${{ github.event.inputs.tag_name }}
-        name: Aseprite ${{ github.event.inputs.tag_name }}
-        body: ${{ steps.get-content.outputs.body-content }}
-        draft: true # 为了遵守 Aseprite 的 EULA, 取消 draft 前请确保仓库为私有
-        prerelease: false
-        files: |
-          D:/a/aseprite.${{ github.event.inputs.tag_name }}.zip
+        tag_name: ${{ github.sha }}
+        release_name: Release ${{ github.sha }}
+        draft: true
+        prerelease: true
+        body: |
+          This is a draft release created by GitHub Actions.
+    - name: Upload Release Assets
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./build/bin/aseprite
+        asset_name: aseprite-${{ matrix.os }}-${{ matrix.build_type }}-${{ matrix.ui }}-${{ matrix.scripting }}.zip
+        asset_content_type: application/zip
