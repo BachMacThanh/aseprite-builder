@@ -1,40 +1,62 @@
-name: Build and Create Draft Release
+name: Build and Release Aseprite
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
-  build-and-draft:
+  build-and-release:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Check out code
-        uses: actions/checkout@v3
-
-      - name: Set up CMake
-        uses: jwlawson/actions-setup-cmake@v1
+      - name: Checkout aseprite/aseprite
+        uses: actions/checkout@v2
         with:
-          cmake-version: "3.20.1"
+          repository: aseprite/aseprite
+          path: aseprite
+          ref: master
 
-      - name: Build with CMake
+      - name: Install dependencies
         run: |
-          mkdir build
-          cd build
-          cmake -DCMAKE_BUILD_TYPE=Release ..
-          cmake --build .
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            g++ \
+            libxcursor-dev \
+            libgtk2.0-dev \
+            libgif-dev \
+            libjsoncpp-dev \
+            libwebp-dev \
+            libcurl4-openssl-dev \
+            libfreetype6-dev
 
-      - name: Archive build artifacts
+      - name: Build Aseprite
+        working-directory: aseprite
+        run: |
+          mkdir -p build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=Release -G Ninja ..
+          ninja
+
+      - name: Archive build artifact
+        run: |
+          cd aseprite/build/bin
+          tar -czf aseprite.tar.gz aseprite
+        shell: bash
+        working-directory: .
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: build-artifacts
-          path: build/
+          name: aseprite-build
+          path: aseprite/build/bin/aseprite.tar.gz
 
-      - name: Create Draft Release
+      - name: Create draft release
         uses: ncipollo/release-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag: draft-build-${{ github.run_number }}
-          releaseName: Draft Build # Adjust as desired
+          tag: "latest-aseprite"
+          releaseName: "Latest Aseprite"
           draft: true
-          artifacts: "build-artifacts" 
+          artifacts: "aseprite-build=aseprite.tar.gz"
+          commit: "master"
