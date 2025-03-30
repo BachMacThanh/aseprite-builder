@@ -22,31 +22,39 @@ jobs:
           - os: windows-latest
             platform: windows
             arch: x64
-            skia-arch: x64
-            artifact-name: aseprite-windows
+            skia-file: Skia-Windows-Release-x64.zip
+            artifact-name: aseprite-windows-x64
+            installer-ext: exe
+          - os: windows-latest
+            platform: windows
+            arch: x86
+            skia-file: Skia-Windows-Release-x86.zip
+            artifact-name: aseprite-windows-x86
             installer-ext: exe
           - os: macos-latest
             platform: macos
             arch: x64
-            skia-arch: x64
+            skia-file: Skia-macOS-Release-x64.zip
             artifact-name: aseprite-macos-intel
             installer-ext: dmg
           - os: macos-latest
             platform: macos
             arch: arm64
-            skia-arch: arm64
+            skia-file: Skia-macOS-Release-arm64.zip
             artifact-name: aseprite-macos-arm64
             installer-ext: dmg
           - os: ubuntu-latest
             platform: linux
             arch: x64
-            skia-arch: x64
-            artifact-name: aseprite-linux
+            skia-file: Skia-Linux-Release-x64-libc++.zip
+            artifact-name: aseprite-linux-x64
             installer-ext: AppImage
-
-    env:
-      SKIA_VERSION: m102
-      BUILD_TYPE: RelWithDebInfo
+          - os: ubuntu-latest
+            platform: linux
+            arch: x86
+            skia-file: Skia-Linux-Release-x86-libc++.zip
+            artifact-name: aseprite-linux-x86
+            installer-ext: AppImage
 
     steps:
       - name: Checkout repository
@@ -85,8 +93,9 @@ jobs:
         run: |
           mkdir -p $HOME/deps
           cd $HOME/deps
-          curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/${{ env.SKIA_VERSION }}/Skia-${{ env.SKIA_VERSION }}-${{ matrix.platform }}-${{ matrix.skia-arch }}.zip
-          unzip skia.zip -d skia
+          echo "Downloading ${{ matrix.skia-file }}..."
+          curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102/${{ matrix.skia-file }}
+          unzip -q skia.zip -d skia
         shell: bash
 
       - name: Set up MSVC (Windows)
@@ -100,7 +109,7 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DLAF_BACKEND=skia -DSKIA_DIR=$HOME/deps/skia -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-${{ matrix.skia-arch }} -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-${{ matrix.skia-arch }}/skia.lib -G Ninja ..
+          cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLAF_BACKEND=skia -DSKIA_DIR=$HOME/deps/skia -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-${{ matrix.arch }} -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-${{ matrix.arch }}/skia.lib -G Ninja ..
           ninja aseprite
         shell: bash
 
@@ -110,14 +119,14 @@ jobs:
           mkdir build
           cd build
           cmake \
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 \
             -DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk \
             -DLAF_BACKEND=skia \
             -DSKIA_DIR=$HOME/deps/skia \
-            -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-${{ matrix.skia-arch }} \
-            -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-${{ matrix.skia-arch }}/libskia.a \
+            -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-x64 \
+            -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-x64/libskia.a \
             -G Ninja \
             ..
           ninja aseprite
@@ -129,14 +138,14 @@ jobs:
           mkdir build
           cd build
           cmake \
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
             -DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk \
             -DLAF_BACKEND=skia \
             -DSKIA_DIR=$HOME/deps/skia \
-            -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-${{ matrix.skia-arch }} \
-            -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-${{ matrix.skia-arch }}/libskia.a \
+            -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-arm64 \
+            -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-arm64/libskia.a \
             -DPNG_ARM_NEON:STRING=on \
             -G Ninja \
             ..
@@ -151,13 +160,13 @@ jobs:
           export CC=clang
           export CXX=clang++
           cmake \
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_CXX_FLAGS:STRING=-stdlib=libc++ \
             -DCMAKE_EXE_LINKER_FLAGS:STRING=-stdlib=libc++ \
             -DLAF_BACKEND=skia \
             -DSKIA_DIR=$HOME/deps/skia \
-            -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-${{ matrix.skia-arch }} \
-            -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-${{ matrix.skia-arch }}/libskia.a \
+            -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-${{ matrix.arch }} \
+            -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-${{ matrix.arch }}/libskia.a \
             -G Ninja \
             ..
           ninja aseprite
@@ -168,12 +177,10 @@ jobs:
         run: |
           mkdir -p packaging/win
           cd build/bin
-          # Using NSIS to create installer (you may need to customize this part)
-          # This is a placeholder and needs actual implementation
+          # Using NSIS to create installer
           echo "Creating Windows installer..."
-          # makensis /DVERSION=${{ env.VERSION }} ../../packaging/win/installer.nsi
-          # For now, just create a zip file as the installer
-          7z a -tzip ../../aseprite-${{ env.VERSION }}-windows-x64.zip aseprite.exe data/
+          # For now, creating a zip file as the installer
+          7z a -tzip ../../aseprite-${{ env.VERSION }}-windows-${{ matrix.arch }}.zip aseprite.exe data/
         shell: bash
 
       - name: Create macOS installer
@@ -183,7 +190,7 @@ jobs:
           cd build/bin
           # Create a DMG file
           echo "Creating macOS installer..."
-          # For now, just create a zip file as the installer
+          # For now, creating a zip file as the installer
           ARCH_SUFFIX="${{ matrix.arch == 'arm64' && '-arm64' || '' }}"
           zip -r ../../aseprite-${{ env.VERSION }}-macos${ARCH_SUFFIX}.zip Aseprite.app/
         shell: bash
@@ -195,16 +202,16 @@ jobs:
           cd build/bin
           # Create AppImage
           echo "Creating Linux AppImage..."
-          # For now, just create a tar.gz file as the installer
-          tar -czvf ../../aseprite-${{ env.VERSION }}-linux-x64.tar.gz aseprite data/
+          # For now, creating a tar.gz file as the installer
+          tar -czvf ../../aseprite-${{ env.VERSION }}-linux-${{ matrix.arch }}.tar.gz aseprite data/
         shell: bash
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.artifact-name }}
           path: |
-            aseprite-${{ env.VERSION }}-${{ matrix.platform }}*.${{ matrix.platform == 'linux' && 'tar.gz' || (matrix.platform == 'macos' && 'zip' || 'zip') }}
+            aseprite-${{ env.VERSION }}-${{ matrix.platform }}-${{ matrix.arch }}*.${{ matrix.platform == 'linux' && 'tar.gz' || (matrix.platform == 'macos' && 'zip' || 'zip') }}
           retention-days: 7
 
   create-release:
@@ -230,9 +237,16 @@ jobs:
         with:
           path: artifacts
 
+      - name: List artifacts for debugging
+        run: |
+          find artifacts -type f | sort
+        shell: bash
+
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: v${{ env.VERSION }}
           name: Aseprite v${{ env.VERSION }}
@@ -246,10 +260,21 @@ jobs:
             
             ## Installers
             
-            - Windows: Download the .zip file and extract to use Aseprite
-            - macOS: Download the .zip file, extract, and move Aseprite.app to your Applications folder
-            - Linux: Download the .tar.gz file and extract to use Aseprite
+            ### Windows
+            - Windows x64: Download the .zip file and extract to use Aseprite
+            - Windows x86: Download the .zip file and extract to use Aseprite
+            
+            ### macOS
+            - macOS Intel (x64): Download the .zip file, extract, and move Aseprite.app to your Applications folder
+            - macOS Apple Silicon (arm64): Download the .zip file, extract, and move Aseprite.app to your Applications folder
+            
+            ### Linux
+            - Linux x64: Download the .tar.gz file and extract to use Aseprite
+            - Linux x86: Download the .tar.gz file and extract to use Aseprite
             
             ## Release Notes
             
-            <Add release notes here>
+            Built by: @BachMacThanh
+            Build date: $(date +'%Y-%m-%d')
+            
+            <Add your release notes here>
