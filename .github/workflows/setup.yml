@@ -22,39 +22,42 @@ jobs:
           - os: windows-latest
             platform: windows
             arch: x64
-            skia-file: "Skia-m102-Windows-Release-x64.zip"
+            skia-file: "Skia-Windows-Release-x64.zip"
             artifact-name: aseprite-windows-x64
             installer-ext: zip
           - os: windows-latest
             platform: windows
             arch: x86
-            skia-file: "Skia-m102-Windows-Release-x86.zip"
+            skia-file: "Skia-Windows-Release-x86.zip"
             artifact-name: aseprite-windows-x86
             installer-ext: zip
           - os: macos-latest
             platform: macos
             arch: x64
-            skia-file: "Skia-m102-macOS-Release-x64.zip"
+            skia-file: "Skia-macOS-Release-x64.zip"
             artifact-name: aseprite-macos-intel
             installer-ext: zip
           - os: macos-latest
             platform: macos
             arch: arm64
-            skia-file: "Skia-m102-macOS-Release-arm64.zip"
+            skia-file: "Skia-macOS-Release-arm64.zip"
             artifact-name: aseprite-macos-arm64
             installer-ext: zip
           - os: ubuntu-latest
             platform: linux
             arch: x64
-            skia-file: "Skia-m102-Linux-Release-x64-libc++.zip"
+            skia-file: "Skia-Linux-Release-x64-libc++.zip"
             artifact-name: aseprite-linux-x64
             installer-ext: tar.gz
           - os: ubuntu-latest
             platform: linux
             arch: x86
-            skia-file: "Skia-m102-Linux-Release-x86-libc++.zip"
+            skia-file: "Skia-Linux-Release-x86-libc++.zip"
             artifact-name: aseprite-linux-x86
             installer-ext: tar.gz
+
+    env:
+      SKIA_RELEASE: m102-861e4743af
 
     steps:
       - name: Checkout repository
@@ -93,19 +96,8 @@ jobs:
         run: |
           mkdir -p $HOME/deps
           cd $HOME/deps
-          echo "Downloading ${{ matrix.skia-file }}..."
-          
-          # Check if the file exists by doing a HEAD request first
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -I https://github.com/aseprite/skia/releases/download/m102/${{ matrix.skia-file }})
-          
-          if [ "$HTTP_STATUS" = "200" ]; then
-            curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102/${{ matrix.skia-file }}
-          else
-            echo "File not found at specified URL, trying alternative format..."
-            # Try alternative format without m102 prefix
-            ALT_FILE=$(echo "${{ matrix.skia-file }}" | sed 's/Skia-m102-/Skia-/')
-            curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102/$ALT_FILE
-          fi
+          echo "Downloading ${{ matrix.skia-file }} from release ${{ env.SKIA_RELEASE }}..."
+          curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/${{ env.SKIA_RELEASE }}/${{ matrix.skia-file }}
           
           # List the contents of the zip file for debugging
           echo "Contents of the downloaded file:"
@@ -289,6 +281,6 @@ jobs:
             ## Release Notes
             
             Built by: @BachMacThanh  
-            Build date: $(date +'%Y-%m-%d')
+            Build date: 2025-03-30
             
             <Add your release notes here>
