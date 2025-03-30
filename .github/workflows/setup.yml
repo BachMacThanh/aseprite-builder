@@ -1,102 +1,168 @@
-name: Build a specified version with setup
+name: Build and Release Aseprite
+
 on:
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'the tag(version) of the Aseprite'
-        required: true
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
-        build_type: [Release]
-        enable_ui: [on]
-        include:
-          - os: windows-latest
-            build_type: Release
-            enable_ui: on
+  build-windows:
+    runs-on: windows-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-    - name: 获得 Release 的 Body 与仓库名称
-      id: get-content
-      shell: bash
-      run: |
-        body=$(curl -s https://api.github.com/repos/aseprite/aseprite/releases/tags/${{ github.event.inputs.tag_name }} | jq -r '.body')
-        echo "body-content=$(echo $body)" >> $GITHUB_OUTPUT 
-        echo $body
-        GITHUB_REPOSITORY="${{ github.repository }}"
-        REPO_NAME="${GITHUB_REPOSITORY#${{ github.repository_owner }}/}"
-        echo "repo-name=$(echo $REPO_NAME)" >> $GITHUB_OUTPUT 
-        echo $REPO_NAME
+      - name: Setup Visual Studio
+        uses: microsoft/setup-msbuild@v1
 
-    - uses: actions/checkout@v3
-      with:
-        repository: 'aseprite/aseprite'
-        submodules: 'recursive'
-        ref: ${{ github.event.inputs.tag_name }}
+      - name: Install dependencies
+        run: |
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          choco install ninja -y
+          git clone --recursive https://github.com/aseprite/skia.git C:\deps\skia
+          cd C:\deps\skia
+          python tools/git-sync-deps
+          bin/gn gen out/Release-x64 --args='is_official_build=true is_component_build=false skia_use_gl=true'
+          ninja -C out/Release-x64 skia
 
-    - uses: seanmiddleditch/gha-setup-ninja@master
-    - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure CMake
+        run: |
+          mkdir build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLAF_BACKEND=skia -DSKIA_DIR=C:\deps\skia -DSKIA_LIBRARY_DIR=C:\deps\skia\out\Release-x64 -DSKIA_LIBRARY=C:\deps\skia\out\Release-x64\skia.lib -G Ninja ..
 
-    - name: 获取 skia 并且生成 Makefile
-      shell: bash
-      run: |
-        if [[ "${{ runner.os }}" == "Windows" ]] ; then
-          export enable_ccache=off
-        else
-          export enable_ccache=on
-        fi
-        curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip
-        7z x skia.zip -oskia
-        cmake -S . -B build -G Ninja \
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-          -DENABLE_UI=${{ matrix.enable_ui }} \
-          -DENABLE_CCACHE=$enable_ccache \
-          -DLAF_BACKEND=skia \
-          -DSKIA_DIR=./skia \
-          -DSKIA_LIBRARY_DIR=./skia/out/Release-x64 \
-          -DSKIA_LIBRARY=./skia/out/Release-x64/skia.lib
+      - name: Build
+        run: |
+          cd build
+          ninja aseprite
 
-    - name: 编译
-      shell: bash
-      run: |
-        cd build && ninja
-    
-    - name: 获取 "libcrypto-1_1-x64.dll"
-      shell: bash 
-      run: |
-        GITHUB_REPOSITORY="${{ github.repository }}"
-        REPO_NAME="${GITHUB_REPOSITORY#${{ github.repository_owner }}/}"
+      - name: Create setup file
+        run: |
+          cd build
+          cpack -G NSIS
 
-        curl -L -o D:/a/$REPO_NAME/$REPO_NAME/build/bin/libcrypto-1_1-x64.dll https://github.com/feenkcom/libopenssl/releases/download/v0.5.0/crypto-x86_64-pc-windows-msvc.dll
-    
-    - name: Install Inno Setup
-      shell: powershell
-      run: |
-        choco install innosetup
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: aseprite-windows
+          path: build/*.exe
 
-    - name: Run Inno Setup Script
-      shell: powershell
-      run: |
-        iscc /Ooutput /F"AsepriteInstaller" D:/a/$REPO_NAME/$REPO_NAME/build/bin/setup.iss
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-    - name: Upload Inno Setup Installer
-      uses: actions/upload-artifact@v4.6.2
-      with:
-        name: AsepriteInstaller
-        path: output/AsepriteInstaller.exe
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja
+          git clone --recursive https://github.com/aseprite/skia.git $HOME/deps/skia
+          cd $HOME/deps/skia
+          python tools/git-sync-deps
+          bin/gn gen out/Release-x64 --args='is_official_build=true is_component_build=false skia_use_gl=true'
+          ninja -C out/Release-x64 skia
 
-    - name: 草拟 Release 并且上传文件
-      uses: softprops/action-gh-release@v1
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        tag_name: ${{ github.event.inputs.tag_name }}
-        name: Aseprite ${{ github.event.inputs.tag_name }}
-        body: ${{ steps.get-content.outputs.body-content }}
-        draft: true # 为了遵守 Aseprite 的 EULA, 取消 draft 前请确保仓库为私有
-        prerelease: false
-        files: |
-          output/AsepriteInstaller.exe
+      - name: Configure CMake
+        run: |
+          mkdir build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 -DCMAKE_OSX_SYSROOT=$(xcrun --sdk macosx --show-sdk-path) -DLAF_BACKEND=skia -DSKIA_DIR=$HOME/deps/skia -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-x64 -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-x64/libskia.a -G Ninja ..
+
+      - name: Build
+        run: |
+          cd build
+          ninja aseprite
+
+      - name: Create setup file
+        run: |
+          cd build
+          cpack -G DragNDrop
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: aseprite-macos
+          path: build/*.dmg
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ clang libc++-dev libc++abi-dev cmake ninja-build libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev
+          git clone --recursive https://github.com/aseprite/skia.git $HOME/deps/skia
+          cd $HOME/deps/skia
+          python tools/git-sync-deps
+          bin/gn gen out/Release-x64 --args='is_official_build=true is_component_build=false skia_use_gl=true'
+          ninja -C out/Release-x64 skia
+
+      - name: Configure CMake
+        run: |
+          mkdir build
+          cd build
+          export CC=clang
+          export CXX=clang++
+          cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS:STRING=-stdlib=libc++ -DCMAKE_EXE_LINKER_FLAGS:STRING=-stdlib=libc++ -DLAF_BACKEND=skia -DSKIA_DIR=$HOME/deps/skia -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-x64 -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-x64/libskia.a -G Ninja ..
+
+      - name: Build
+        run: |
+          cd build
+          ninja aseprite
+
+      - name: Create setup file
+        run: |
+          cd build
+          cpack -G DEB
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: aseprite-linux
+          path: build/*.deb
+
+  create-release:
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v2
+        with:
+          name: aseprite-windows
+          path: builds/windows
+
+      - name: Download macOS build
+        uses: actions/download-artifact@v2
+        with:
+          name: aseprite-macos
+          path: builds/macos
+
+      - name: Download Linux build
+        uses: actions/download-artifact@v2
+        with:
+          name: aseprite-linux
+          path: builds/linux
+
+      - name: Create Draft Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.sha }}
+          release_name: Release ${{ github.sha }}
+          draft: true
+          prerelease: false
+          files: |
+            builds/windows/*.exe
+            builds/macos/*.dmg
+            builds/linux/*.deb
