@@ -119,6 +119,7 @@ jobs:
       - name: Configure and build (Windows)
         if: matrix.platform == 'windows'
         run: |
+          dir
           mkdir build
           cd build
           cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLAF_BACKEND=skia -DSKIA_DIR=$HOME/deps/skia -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-${{ matrix.arch }} -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-${{ matrix.arch }}/skia.lib -G Ninja ..
