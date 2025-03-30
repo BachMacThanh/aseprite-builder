@@ -22,39 +22,39 @@ jobs:
           - os: windows-latest
             platform: windows
             arch: x64
-            skia-file: Skia-Windows-Release-x64.zip
+            skia-file: "Skia-m102-Windows-Release-x64.zip"
             artifact-name: aseprite-windows-x64
-            installer-ext: exe
+            installer-ext: zip
           - os: windows-latest
             platform: windows
             arch: x86
-            skia-file: Skia-Windows-Release-x86.zip
+            skia-file: "Skia-m102-Windows-Release-x86.zip"
             artifact-name: aseprite-windows-x86
-            installer-ext: exe
+            installer-ext: zip
           - os: macos-latest
             platform: macos
             arch: x64
-            skia-file: Skia-macOS-Release-x64.zip
+            skia-file: "Skia-m102-macOS-Release-x64.zip"
             artifact-name: aseprite-macos-intel
-            installer-ext: dmg
+            installer-ext: zip
           - os: macos-latest
             platform: macos
             arch: arm64
-            skia-file: Skia-macOS-Release-arm64.zip
+            skia-file: "Skia-m102-macOS-Release-arm64.zip"
             artifact-name: aseprite-macos-arm64
-            installer-ext: dmg
+            installer-ext: zip
           - os: ubuntu-latest
             platform: linux
             arch: x64
-            skia-file: Skia-Linux-Release-x64-libc++.zip
+            skia-file: "Skia-m102-Linux-Release-x64-libc++.zip"
             artifact-name: aseprite-linux-x64
-            installer-ext: AppImage
+            installer-ext: tar.gz
           - os: ubuntu-latest
             platform: linux
             arch: x86
-            skia-file: Skia-Linux-Release-x86-libc++.zip
+            skia-file: "Skia-m102-Linux-Release-x86-libc++.zip"
             artifact-name: aseprite-linux-x86
-            installer-ext: AppImage
+            installer-ext: tar.gz
 
     steps:
       - name: Checkout repository
@@ -94,8 +94,28 @@ jobs:
           mkdir -p $HOME/deps
           cd $HOME/deps
           echo "Downloading ${{ matrix.skia-file }}..."
-          curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102/${{ matrix.skia-file }}
+          
+          # Check if the file exists by doing a HEAD request first
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -I https://github.com/aseprite/skia/releases/download/m102/${{ matrix.skia-file }})
+          
+          if [ "$HTTP_STATUS" = "200" ]; then
+            curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102/${{ matrix.skia-file }}
+          else
+            echo "File not found at specified URL, trying alternative format..."
+            # Try alternative format without m102 prefix
+            ALT_FILE=$(echo "${{ matrix.skia-file }}" | sed 's/Skia-m102-/Skia-/')
+            curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102/$ALT_FILE
+          fi
+          
+          # List the contents of the zip file for debugging
+          echo "Contents of the downloaded file:"
+          file skia.zip
+          
           unzip -q skia.zip -d skia
+          
+          # List the extracted contents for debugging
+          echo "Extracted directory structure:"
+          find skia -type d | sort
         shell: bash
 
       - name: Set up MSVC (Windows)
@@ -172,37 +192,31 @@ jobs:
           ninja aseprite
         shell: bash
 
-      - name: Create Windows installer
+      - name: Create Windows package
         if: matrix.platform == 'windows'
         run: |
           mkdir -p packaging/win
           cd build/bin
-          # Using NSIS to create installer
-          echo "Creating Windows installer..."
-          # For now, creating a zip file as the installer
+          # Create a zip file for distribution
           7z a -tzip ../../aseprite-${{ env.VERSION }}-windows-${{ matrix.arch }}.zip aseprite.exe data/
         shell: bash
 
-      - name: Create macOS installer
+      - name: Create macOS package
         if: matrix.platform == 'macos'
         run: |
           mkdir -p packaging/macos
           cd build/bin
-          # Create a DMG file
-          echo "Creating macOS installer..."
-          # For now, creating a zip file as the installer
+          # Create a zip file for distribution
           ARCH_SUFFIX="${{ matrix.arch == 'arm64' && '-arm64' || '' }}"
           zip -r ../../aseprite-${{ env.VERSION }}-macos${ARCH_SUFFIX}.zip Aseprite.app/
         shell: bash
 
-      - name: Create Linux installer
+      - name: Create Linux package
         if: matrix.platform == 'linux'
         run: |
           mkdir -p packaging/linux
           cd build/bin
-          # Create AppImage
-          echo "Creating Linux AppImage..."
-          # For now, creating a tar.gz file as the installer
+          # Create a tar.gz file for distribution
           tar -czvf ../../aseprite-${{ env.VERSION }}-linux-${{ matrix.arch }}.tar.gz aseprite data/
         shell: bash
 
@@ -211,7 +225,7 @@ jobs:
         with:
           name: ${{ matrix.artifact-name }}
           path: |
-            aseprite-${{ env.VERSION }}-${{ matrix.platform }}-${{ matrix.arch }}*.${{ matrix.platform == 'linux' && 'tar.gz' || (matrix.platform == 'macos' && 'zip' || 'zip') }}
+            aseprite-${{ env.VERSION }}-${{ matrix.platform }}-${{ matrix.arch }}*.${{ matrix.installer-ext }}
           retention-days: 7
 
   create-release:
@@ -258,7 +272,7 @@ jobs:
           body: |
             # Aseprite v${{ env.VERSION }}
             
-            ## Installers
+            ## Packages
             
             ### Windows
             - Windows x64: Download the .zip file and extract to use Aseprite
@@ -274,7 +288,7 @@ jobs:
             
             ## Release Notes
             
-            Built by: @BachMacThanh
+            Built by: @BachMacThanh  
             Build date: $(date +'%Y-%m-%d')
             
             <Add your release notes here>
